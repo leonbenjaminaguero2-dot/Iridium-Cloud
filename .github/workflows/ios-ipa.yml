@@ -1,0 +1,66 @@
+name: Build signed iOS IPA
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'com.example.iridiumcloud' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec project.yml
+      - name: Check signing secrets
+        env:
+          CERT: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          PASS: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          TEAM: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          test -n "$CERT" && test -n "$PROFILE" && test -n "$PASS" && test -n "$TEAM" || { echo "Configure the four IOS_* signing secrets in GitHub Settings."; exit 1; }
+      - name: Install Apple signing files
+        env:
+          CERT: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          PASS: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+        run: |
+          echo -n "$CERT" | base64 -D -o "$RUNNER_TEMP/signing.p12"
+          echo -n "$PROFILE" | base64 -D -o "$RUNNER_TEMP/profile.mobileprovision"
+          security create-keychain -p "$PASS" "$RUNNER_TEMP/build.keychain"
+          security unlock-keychain -p "$PASS" "$RUNNER_TEMP/build.keychain"
+          security list-keychains -d user -s "$RUNNER_TEMP/build.keychain"
+          security import "$RUNNER_TEMP/signing.p12" -P "$PASS" -A -f pkcs12 -k "$RUNNER_TEMP/build.keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$PASS" "$RUNNER_TEMP/build.keychain"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$RUNNER_TEMP/profile.plist")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' "$RUNNER_TEMP/profile.plist")
+          cp "$RUNNER_TEMP/profile.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+      - name: Archive app
+        env:
+          TEAM: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          xcodebuild -project IridiumCloud.xcodeproj -scheme IridiumCloud -configuration Release -sdk iphoneos -archivePath "$RUNNER_TEMP/IridiumCloud.xcarchive" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Development" DEVELOPMENT_TEAM="$TEAM" PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID" archive
+      - name: Export signed IPA
+        env:
+          TEAM: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>method</key><string>development</string><key>teamID</key><string>$TEAM</string><key>signingStyle</key><string>manual</string>
+          <key>provisioningProfiles</key><dict><key>$IOS_BUNDLE_ID</key><string>$PROFILE_NAME</string></dict>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/IridiumCloud.xcarchive" -exportPath "$RUNNER_TEMP/ipa" -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IRIDIUMCloud-IPA
+          path: ${{ runner.temp }}/ipa/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
