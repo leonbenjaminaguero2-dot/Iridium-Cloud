@@ -1,0 +1,20 @@
+﻿name: IridiumCloud
+options:
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  IridiumCloud:
+    type: application
+    platform: iOS
+    sources:
+      - path: IridiumCloud
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.iridiumcloud
+        PRODUCT_NAME: IridiumCloud
+        INFOPLIST_KEY_CFBundleDisplayName: "IRIDIUM Cloud"
+        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Manual
